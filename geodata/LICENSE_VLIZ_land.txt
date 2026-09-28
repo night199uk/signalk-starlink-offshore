@@ -1,0 +1,21 @@
+ATTRIBUTION & LICENSE - World Countries 2014 land
+=================================================
+
+Source data:
+  Marine Regions (VLIZ) "World Countries 2014"
+  The normal baseline coastline of the Maritime Boundaries Geodatabase, from
+  which the Territorial Seas (12NM) and Internal Waters layers were calculated.
+  https://www.marineregions.org/
+  Accessed via the VLIZ WFS layer `MarineRegions:worldcountries_esri_2014`
+  (https://geo.vliz.be/geoserver) by `tools/fetch-vliz-land.js`.
+
+License:
+  Creative Commons Attribution 4.0 International (CC-BY 4.0)
+  https://creativecommons.org/licenses/by/4.0/
+
+The full Marine Regions LICENSE, TERMS OF USE & CITATION text applies and is
+kept verbatim alongside the other VLIZ layers:
+  - geodata/LICENSE_12NM_v4.txt
+  - geodata/LICENSE_InternalWaters_v4.txt
+In particular, Marine Regions data "has no legal value whatsoever" and "is not
+meant to be used for legal, economical ... or navigational purposes".

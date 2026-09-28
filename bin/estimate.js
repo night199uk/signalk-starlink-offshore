@@ -3,9 +3,9 @@
 
 /*
  * Command line helper to exercise the maritime zone analysis without a
- * Signal K server. Loads the three bundled whole-world datasets (territorial
- * seas, internal waters, land) and prints the current maritime zone and the
- * jurisdiction crossing forecast.
+ * Signal K server. Loads the two bundled whole-world datasets (territorial
+ * seas, coast) and prints the current maritime zone and the jurisdiction
+ * crossing forecast.
  *
  *   node bin/estimate.js --lat 49.5 --lon -4.5 --cog 235 --speed-kn 6.5
  *
@@ -45,11 +45,12 @@ function main() {
 
   const geodataDir = path.join(__dirname, '..', 'lib', 'geodata')
   const fsExists = (file) => fs.existsSync(path.join(geodataDir, file))
-  const load = (file, zoneLabel) => {
+  const load = (file, zoneLabel, containment) => {
     if (!fsExists(file)) return null
     const s = new TerritoryStore({
       bundledFile: path.join(geodataDir, file),
       zoneLabel,
+      containment,
       logger
     })
     s.loadBundled()
@@ -59,8 +60,7 @@ function main() {
   console.error('Loading bundled world datasets…')
   const zones = new Zones({
     territorialSea: load('territorial-seas-world.json.gz', 'territorial sea'),
-    internalWaters: load('internal-waters-world.json.gz', 'internal water'),
-    land: load('land-world.json.gz', 'land')
+    coast: load('coast-world.json.gz', 'coast', 'any')
   })
 
   if (!zones.territorialSea || zones.territorialSea.features.length === 0) {
@@ -78,7 +78,7 @@ function main() {
     cog != null
       ? analyzeCourse(jurisdictionAt, lat, lon, cog, speedKn ? speedKn * 1852 / 3600 : null, {
           horizonNm: lookaheadNm,
-          stepNm: 0.2
+          stepNm: 0.5
         })
       : { startCountries: jurisdictionAt(lat, lon), crossings: [] }
 
@@ -95,7 +95,7 @@ function main() {
     speedKnots: speedKn,
     maritimeZone: zone.zone,
     currentTerritorialSea: zone.countries.length ? zone.countries.join(', ') : '',
-    insideTerritorialSea: zone.zone === 'territorial-sea' || zone.zone === 'internal-waters',
+    insideTerritorialSea: zone.zone === 'territorial-sea',
     nextTerritorialSea: entry ? entry.countriesEntering.join(', ') : '',
     timeToNextTerritorialSea: entry ? entry.timeSeconds : null,
     distanceToNextTerritorialSea: entry ? entry.distanceNm * 1852 : null,

@@ -221,20 +221,20 @@ test('zones classify bay, land and high seas correctly (Cartagena scenario)', as
   if (!bundledLoaded()) return t.skip('bundled dataset not built')
   const ctx = startBundled(t, makeApp)
 
-  // The vessel inside Cartagena bay: the VLIZ territorial sea model stops at
-  // Colombia's straight baselines, so the bay is internal waters, not TS. The
-  // simplified insideTerritorialSea boolean covers both, the zone names the
-  // exact one, and currentTerritorialSea names the country either way.
+  // The vessel inside Cartagena bay: VLIZ models the territorial sea as the
+  // 12 NM belt seaward of the baselines, so the bay is landward of them and is
+  // reported as coast (onLand), not territorial sea. currentTerritorialSea
+  // still names the country.
   ctx.push('navigation.position', { latitude: 10.416582624299975, longitude: -75.54658745563728 })
   await sleep(1200)
   let nav = ctx.navValues()
-  assert.strictEqual(nav['navigation.maritimeZone'], 'internal-waters')
+  assert.strictEqual(nav['navigation.maritimeZone'], 'land')
   assert.strictEqual(nav['navigation.currentTerritorialSea'], 'Colombia')
-  assert.strictEqual(nav['navigation.insideTerritorialSea'], true)
-  assert.strictEqual(nav['navigation.onLand'], false)
+  assert.strictEqual(nav['navigation.insideTerritorialSea'], false)
+  assert.strictEqual(nav['navigation.onLand'], true)
   assert.strictEqual(nav['navigation.maritimeZoneCountries'], undefined, 'maritimeZoneCountries removed')
 
-  // On the Cartagena city landmass -> Natural Earth land of Colombia.
+  // On the Cartagena city landmass -> coast of Colombia.
   ctx.push('navigation.position', { latitude: 10.391, longitude: -75.479 })
   await sleep(1200)
   nav = ctx.navValues()
@@ -258,18 +258,23 @@ test('nextEvent reflects jurisdiction semantics, not territorial sea polygons al
   if (!bundledLoaded()) return t.skip('bundled dataset not built')
   const ctx = startBundled(t, makeApp)
 
-  // The vessel is in Colombia's internal waters (Cartagena bay). The first
-  // jurisdiction change on a coastal course must be LEAVING Colombia, not
-  // (as the old TS-polygon-only forecast reported) entering Venezuela while
-  // still inside Colombia.
+  // The vessel is on Colombia's coast (Cartagena bay). The first jurisdiction
+  // change on this coastal course must involve LEAVING Colombia: at the
+  // Colombia/Venezuela border the set changes from {Colombia} to {Venezuela}
+  // in one step, i.e. a 'transition' (leave Colombia, enter Venezuela) and the
+  // next new country is Venezuela. The old TS-polygon-only forecast reported
+  // entering Venezuela while still inside Colombia; before the coast layer
+  // shared the maritime layers' coastline, a coastal gap first produced a
+  // phantom 'leave' into high seas.
   ctx.push('navigation.position', { latitude: 10.416490769348695, longitude: -75.54663001887337 })
   ctx.push('navigation.courseOverGroundTrue', (75 * Math.PI) / 180)
   await sleep(1600)
 
   const nav = ctx.navValues()
-  assert.strictEqual(nav['navigation.maritimeZone'], 'internal-waters')
+  assert.strictEqual(nav['navigation.maritimeZone'], 'land')
   assert.strictEqual(nav['navigation.currentTerritorialSea'], 'Colombia')
-  assert.strictEqual(nav['navigation.nextEvent'], 'leave')
+  assert.strictEqual(nav['navigation.nextEvent'], 'transition')
+  assert.strictEqual(nav['navigation.nextTerritorialSea'], 'Venezuela')
   assert.ok(nav['navigation.nextEventDistanceM'] > 0, 'distance to first jurisdiction change present')
   assert.deepStrictEqual(ctx.errors, [])
 })

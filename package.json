@@ -1,7 +1,7 @@
 {
   "name": "signalk-starlink-offshore",
-  "version": "0.1.0",
-  "description": "Signal K plugin (bundled worldwide data, fully offline) that reports the maritime zone the vessel is in - territorial sea, internal waters, land or high seas - with the sovereign country, forecasts the next jurisdiction changes (enter/leave/transition) on the current course and speed, and raises notifications before each crossing.",
+  "version": "0.1.1",
+  "description": "Signal K plugin (bundled worldwide data, fully offline) that reports the maritime zone the vessel is in - territorial sea, coast (land/internal waters) or high seas - with the sovereign country, forecasts the next jurisdiction changes (enter/leave/transition) on the current course and speed, and raises notifications before each crossing.",
   "main": "index.js",
   "files": [
     "index.js",
@@ -11,7 +11,8 @@
     "NOTICE",
     "geodata/LICENSE_12NM_v4.txt",
     "geodata/LICENSE_InternalWaters_v4.txt",
-    "geodata/LICENSE_NaturalEarth.txt",
+    "geodata/LICENSE_ArchipelagicWaters_v4.txt",
+    "geodata/LICENSE_VLIZ_land.txt",
     "bin/"
   ],
   "scripts": {
@@ -22,6 +23,8 @@
     "signalk-category-utility",
     "territorial sea",
     "internal waters",
+    "archipelagic waters",
+    "coast",
     "maritime zone",
     "12nm",
     "maritime boundary",
@@ -41,9 +44,10 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/night199uk/signalk-starlink-offshore"
+    "url": "git+https://github.com/night199uk/signalk-starlink-offshore.git"
   },
   "devDependencies": {
+    "polygon-clipping": "^0.15.7",
     "shapefile": "^0.6.6"
   }
 }

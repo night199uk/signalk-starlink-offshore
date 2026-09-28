@@ -1,3 +1,6 @@
 node_modules/
 geodata/*.zip
+geodata/*.geojson
+geodata/*.geojson.gz
 *.tmp*.swp
+geodata/*.json.gz

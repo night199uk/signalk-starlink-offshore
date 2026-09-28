@@ -3,23 +3,23 @@
 /*
  * SignalK Starlink Offshore
  *
- * Tracks the vessel position against three world boundary layers (territorial
- * sea 12NM, internal waters, land), reports the maritime zone the vessel is
- * in (territorial sea / internal waters / land / high seas) with the
- * sovereign country/ies, forecasts the next changes of that jurisdiction set
- * (enter / leave / transition) on the current course and speed, and raises a
- * Signal K notification shortly before a crossing.
+ * Tracks the vessel position against two world boundary layers (territorial
+ * sea 12NM, and the "coast": land + internal waters + archipelagic waters),
+ * reports the maritime zone the vessel is in (territorial sea / land / high
+ * seas) with the sovereign country/ies, forecasts the next changes of that
+ * jurisdiction set (enter / leave / transition) on the current course and
+ * speed, and raises a Signal K notification shortly before a crossing.
  *
- * The plugin is fully offline: it ships with three bundled whole-world
- * datasets and never touches the network:
+ * The plugin is fully offline: it ships with two bundled whole-world datasets
+ * and never touches the network:
  *   - territorial sea: Marine Regions (VLIZ) Territorial Seas 12NM v4
- *   - internal waters: Marine Regions (VLIZ) World Internal Waters v4
- *   - land:            Natural Earth 10m admin-0 countries
+ *   - coast:          Marine Regions (VLIZ) land + internal waters +
+ *                     archipelagic waters, dissolved per country
  *
  * Published paths (vessels.self):
- *   navigation.insideTerritorialSea            boolean (true in TS or internal waters)
- *   navigation.onLand                          boolean
- *   navigation.maritimeZone                    'territorial-sea'|'internal-waters'|'land'|'high-seas'
+ *   navigation.insideTerritorialSea            boolean (inside the 12 NM territorial sea)
+ *   navigation.onLand                          boolean (on land or in internal/archipelagic waters)
+ *   navigation.maritimeZone                    'territorial-sea'|'land'|'high-seas'
  *   navigation.currentTerritorialSea           countries inside (any zone; '' in high seas)
  *   navigation.nextTerritorialSea              next NEW country to enter (skips countries already inside; '')
  *   navigation.timeToNextTerritorialSea        seconds until the next entry
@@ -28,7 +28,7 @@
  *   navigation.nextEventDistanceM              metres to the next event
  *   navigation.timeToLeaveTerritorialSea       seconds until exiting current TS
  *   navigation.distanceToLeaveTerritorialSea   metres to the exit
- *   navigation.territorialSeaBoundaryDistanceM metres to nearest boundary (any layer)
+ *   navigation.territorialSeaBoundaryDistanceM metres to nearest boundary (either layer)
  *
  * Notifications:
  *   notifications.starlinkOffshore.territorialSea   warn shortly before a crossing
@@ -38,8 +38,8 @@
  *   Registers as a read-only Signal K resource provider for the standard
  *   'regions' type (/signalk/v2/api/resources/regions), serving one
  *   generalised region per country covering its full maritime footprint
- *   (territorial sea 12NM + internal waters + land). Map clients such as
- *   Freeboard-SK render these in their built-in "Regions" layer.
+ *   (territorial sea 12NM + coast). Map clients such as Freeboard-SK render
+ *   these in their built-in "Regions" layer.
  */
 
 const path = require('path')
@@ -129,8 +129,7 @@ module.exports = function (app) {
   plugin.schema = schema
 
   let boundariesTs = null
-  let boundariesIw = null
-  let boundariesLand = null
+  let boundariesCoast = null
   let zones = null
   let config = null
   let state = null
@@ -142,6 +141,14 @@ module.exports = function (app) {
   let computing = false
   let dataStatus = 'none' // 'none' | 'fresh'
   let regionsProvider = null
+  // Caches keyed on quantised inputs. The crossing forecast and the nearest
+  // boundary are the expensive operations and depend only on the vessel's
+  // position/course/speed (not wall-clock time), so a moored or steady vessel
+  // does almost no work and a moving one only recomputes them when the coarsely
+  // quantised inputs change.
+  let lastInputKey = null
+  let forecastCache = null // { key, analysis }
+  let nearestCache = null // { key, nm }
 
   const unsubscribes = []
 
@@ -175,13 +182,15 @@ module.exports = function (app) {
       error: (m) => app.error(m)
     }
 
-    // All three layers ship with the plugin and are always loaded; the plugin
-    // never accesses the network. A missing file degrades gracefully (the
-    // zone precedence simply has one less competing layer); the territorial
-    // sea layer is what makes the plugin useful at all, so its presence
-    // decides the dataStatus alarm.
-    const loadLayer = (file, zoneLabel) => {
-      const s = new TerritoryStore({ bundledFile: file, zoneLabel, logger })
+    // Both layers ship with the plugin and are always loaded; the plugin never
+    // accesses the network. A missing file degrades gracefully (the zone
+    // precedence simply has one less competing layer); the territorial sea
+    // layer is what makes the plugin useful at all, so its presence decides the
+    // dataStatus alarm. The coast layer is queried as "inside any ring" (see
+    // lib/boundaries.js) because its per-country dissolve may leave overlapping
+    // rings and its holes (lakes) should read as land.
+    const loadLayer = (file, zoneLabel, containment) => {
+      const s = new TerritoryStore({ bundledFile: file, zoneLabel, containment, logger })
       s.loadBundled()
       return s.toBoundaries()
     }
@@ -189,16 +198,11 @@ module.exports = function (app) {
       path.join(geodataDir, 'territorial-seas-world.json.gz'),
       'territorial sea'
     )
-    boundariesIw = loadLayer(
-      path.join(geodataDir, 'internal-waters-world.json.gz'),
-      'internal water'
-    )
-    boundariesLand = loadLayer(path.join(geodataDir, 'land-world.json.gz'), 'land')
+    boundariesCoast = loadLayer(path.join(geodataDir, 'coast-world.json.gz'), 'coast', 'any')
 
     zones = new Zones({
       territorialSea: boundariesTs,
-      internalWaters: boundariesIw,
-      land: boundariesLand
+      coast: boundariesCoast
     })
 
     dataStatus = boundariesTs.features.length > 0 ? 'fresh' : 'none'
@@ -276,7 +280,7 @@ module.exports = function (app) {
     const resourceNote = regionsProvider ? `, ${regionsProvider.count} country regions` : ''
     app.setPluginStatus(
       `Starlink Offshore started (${counts.territorialSea} territorial sea areas, ` +
-        `${counts.internalWaters} internal water areas, ${counts.land} land areas${resourceNote})`
+        `${counts.coast} coastal areas${resourceNote})`
     )
     return true
   }
@@ -303,10 +307,8 @@ module.exports = function (app) {
     switch (zone.zone) {
       case 'territorial-sea':
         return `Inside ${zone.countries.join(', ')} territorial sea`
-      case 'internal-waters':
-        return `Inside ${zone.countries.join(', ')} internal waters`
       case 'land':
-        return `On land (${zone.countries.join(', ')})`
+        return `Inside ${zone.countries.join(', ')} (land or internal waters)`
       default:
         return `Outside any country's waters`
     }
@@ -372,33 +374,55 @@ module.exports = function (app) {
       const cogDeg = currentCourseDeg()
       const sogMps = currentSpeedMps()
 
+      // Do nothing unless an input actually changed (quantised to ~1 m / 0.5
+      // degrees / 0.1 m/s). Keeps a moored or steady vessel free.
+      const q = (v, s) => (v == null || !isFinite(v) ? 'x' : Math.round(v / s))
+      const inputKey = `${q(lat, 1e-5)}:${q(lon, 1e-5)}:${q(cogDeg, 0.5)}:${q(sogMps, 0.1)}`
+      if (inputKey === lastInputKey) return
+      lastInputKey = inputKey
+
       const zone = zones ? zones.zoneAt(lat, lon) : { zone: 'high-seas', countries: [] }
-      // "Inside territorial sea" is the umbrella a Starlink user cares about:
-      // true for the territorial sea *and* internal waters (both are a
-      // country's offshore jurisdiction; the precise distinction is reported
-      // through navigation.maritimeZone).
-      const inside =
-        zone.zone === 'territorial-sea' || zone.zone === 'internal-waters'
-      const nearestNm = zones
-        ? zones.nearestBoundaryNm(lat, lon, config.lookaheadNm)
-        : boundariesTs.nearestBoundaryNm(lat, lon, config.lookaheadNm)
+      // The two booleans a Starlink user cares about: in a country's 12 NM
+      // territorial sea, or on its coast (land, internal or archipelagic
+      // waters). The precise zone is named by navigation.maritimeZone.
+      const inside = zone.zone === 'territorial-sea'
+
+      // Nearest boundary: recompute only when the position moves ~10 m
+      // (position key at 1e-4 degrees).
+      const posKey = `${q(lat, 1e-4)}:${q(lon, 1e-4)}`
+      let nearestNm
+      if (nearestCache && nearestCache.key === posKey) {
+        nearestNm = nearestCache.nm
+      } else {
+        nearestNm = zones
+          ? zones.nearestBoundaryNm(lat, lon, config.lookaheadNm)
+          : boundariesTs.nearestBoundaryNm(lat, lon, config.lookaheadNm)
+        nearestCache = { key: posKey, nm: nearestNm }
+      }
 
       // The crossing forecast runs over the *jurisdiction* predicate: the set
-      // of countries the position is inside across any layer (territorial
-      // sea, internal waters, land), with each layer's country sets combined
-      // in zone precedence. An event is a change of that set, so leaving
-      // Colombia's internal waters is reported as a 'leave' even though the
-      // position was never inside a territorial sea boundary polygon.
-      const jurisdictionAt = (la, lo) =>
-        zones ? zones.zoneAt(la, lo).countries : boundariesTs.countriesAt(la, lo)
-
-      const analysis =
-        cogDeg != null
-          ? analyzeCourse(jurisdictionAt, lat, lon, cogDeg, sogMps, {
-              horizonNm: config.lookaheadNm,
-              stepNm: 0.2
-            })
-          : { startCountries: jurisdictionAt(lat, lon), crossings: [] }
+      // of countries the position is inside across either layer (territorial
+      // sea or coast), combined in zone precedence. An event is a change of
+      // that set, so crossing from Colombia's coast into Venezuela's is a
+      // 'transition' rather than an enter or leave alone. Recompute only when
+      // position (~10 m), course (~1 deg) or speed (~0.5 m/s) change; otherwise
+      // reuse the cached forecast (distances/times stay valid).
+      const forecastKey = `${posKey}:${q(cogDeg, 1)}:${q(sogMps, 0.5)}`
+      let analysis
+      if (forecastCache && forecastCache.key === forecastKey) {
+        analysis = forecastCache.analysis
+      } else {
+        const jurisdictionAt = (la, lo) =>
+          zones ? zones.zoneAt(la, lo).countries : boundariesTs.countriesAt(la, lo)
+        analysis =
+          cogDeg != null
+            ? analyzeCourse(jurisdictionAt, lat, lon, cogDeg, sogMps, {
+                horizonNm: config.lookaheadNm,
+                stepNm: 0.5
+              })
+            : { startCountries: jurisdictionAt(lat, lon), crossings: [] }
+        forecastCache = { key: forecastKey, analysis }
+      }
 
       const first = analysis.crossings[0] || null
       // "Next" means the next country the vessel is not already under: skip
@@ -526,10 +550,8 @@ module.exports = function (app) {
         const eta = formatEta(s.leave.timeSeconds)
         message += ` · leaves ≈${dist} nm${eta ? ` (${eta})` : ''}`
       }
-    } else if (s.zone && s.zone.zone === 'internal-waters') {
-      message = `Inside ${s.zone.countries.join(', ')} internal waters`
     } else if (s.zone && s.zone.zone === 'land') {
-      message = `On land (${s.zone.countries.join(', ')})`
+      message = `On the coast of ${s.zone.countries.join(', ')}`
     } else if (s.crossingCourse) {
       if (s.entry) {
         const dist = s.entry.distanceNm.toFixed(1)
@@ -573,11 +595,8 @@ module.exports = function (app) {
       if (layers.territorialSea > 0) {
         counts.push(`${layers.territorialSea} territorial sea ${layers.territorialSea === 1 ? 'area' : 'areas'}`)
       }
-      if (layers.internalWaters > 0) {
-        counts.push(`${layers.internalWaters} internal water ${layers.internalWaters === 1 ? 'area' : 'areas'}`)
-      }
-      if (layers.land > 0) {
-        counts.push(`${layers.land} land areas`)
+      if (layers.coast > 0) {
+        counts.push(`${layers.coast} coastal ${layers.coast === 1 ? 'area' : 'areas'}`)
       }
       value = {
         state: 'normal',

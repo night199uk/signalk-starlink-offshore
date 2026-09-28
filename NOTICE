@@ -2,16 +2,17 @@ Bundled boundary data
 =====================
 
 SignalK Starlink Offshore ships pre-converted, compressed world datasets for
-three layers used to classify the vessel's maritime zone:
+two layers used to classify the vessel's maritime zone:
 
   1. territorial sea  - Marine Regions (VLIZ) Territorial Seas (12NM) v4
-  2. internal waters  - Marine Regions (VLIZ) World Internal Waters v4
-  3. land             - Natural Earth 10m Admin 0 Countries
+  2. coast            - Marine Regions (VLIZ) land + internal waters +
+                        archipelagic waters, dissolved per country
 
-Internal waters is what distinguishes a bay inside a state's straight
-baselines (e.g. Cartagena harbour) from the territorial sea seaward of them;
-land is Natural Earth because Marine Regions publishes no standalone land
-layer (their EEZ+Land union cannot separate land from sea).
+The two layers share the same baselines and tile cleanly, so a position never
+falls into a sliver between them. The coast is everything landward of the
+baselines the territorial sea is measured from (land and internal /
+archipelagic waters); there is no separate land versus internal-waters
+distinction.
 
 1. Territorial seas
 -------------------
@@ -25,24 +26,25 @@ License:
   https://creativecommons.org/licenses/by/4.0/
   Original terms-of-use text kept verbatim in `geodata/LICENSE_12NM_v4.txt`.
 
-2. Internal waters
-------------------
-Source data:
+2. Coast
+--------
+Source data (all Flanders Marine Institute, VLIZ):
   Maritime Boundaries Geodatabase: World Internal Waters, version 4
-  Flanders Marine Institute (VLIZ), 2023
-  https://www.marineregions.org/  ·  https://doi.org/10.14284/631
+    https://www.marineregions.org/  ·  https://doi.org/10.14284/631
+  Maritime Boundaries Geodatabase: Archipelagic Waters, version 4
+    https://www.marineregions.org/  ·  https://doi.org/10.14284/629
+  World Countries 2014 land (the normal baseline of the boundaries),
+    accessed via the VLIZ WFS (`MarineRegions:worldcountries_esri_2014`,
+    https://geo.vliz.be/geoserver)
+  The three are dissolved into one polygon set per country by
+  `tools/build-coast.js`.
 
 License:
   Creative Commons Attribution 4.0 International (CC-BY 4.0)
   https://creativecommons.org/licenses/by/4.0/
-  Original terms-of-use text kept verbatim in `geodata/LICENSE_InternalWaters_v4.txt`.
-
-3. Land
--------
-Source data:
-  Natural Earth, Admin 0 Countries, 1:10m
-  https://www.naturalearthdata.com/downloads/10m-cultural-vectors/
-  Data is in the public domain (see `geodata/LICENSE_NaturalEarth.txt`).
+  Terms kept verbatim in `geodata/LICENSE_InternalWaters_v4.txt`,
+  `geodata/LICENSE_ArchipelagicWaters_v4.txt` and
+  `geodata/LICENSE_VLIZ_land.txt`.
 
 Terms of use of the Marine Regions data:
   VLIZ data "is not meant to be used for legal, economical (in the sense of
@@ -52,4 +54,4 @@ Terms of use of the Marine Regions data:
   plugin is therefore informative only and must not be relied upon for the
   safety or legality of a voyage. Please consult official charted boundaries.
 
-No endorsement by VLIZ / Marine Regions or Natural Earth is implied.
+No endorsement by VLIZ / Marine Regions is implied.

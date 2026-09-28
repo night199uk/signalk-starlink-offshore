@@ -1,4 +1,0 @@
-Natural Earth Admin 0 Countries, 1:10m
-Source: Natural Earth (public domain / CC0)
-https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-0-countries/
-Natural Earth data is in the public domain.
