@@ -65,9 +65,25 @@ All values are published for `vessels.<self>` under the plugin source
 
 - `notifications.starlinkOffshore.territorialSea` — warns (`visual` + `sound`)
   when the next crossing is within `warningDistanceNm` (default 2 nm), stating
-  the country and an ETA. Otherwise carries a normal status message.
+  the country and an ETA, unless `navigation.state` is `moored` or `anchored`.
+  Otherwise carries a normal status message. A change to either state clears
+  an active crossing warning on the next compute interval, even if position,
+  course and speed have not changed. Warnings resume when the state changes
+  away from `moored` or `anchored`. Missing or unknown state retains the normal
+  warning behavior. Zone and crossing forecast outputs remain available in
+  every state.
 - `notifications.starlinkOffshore.dataStatus` — `normal` when the bundled
-  boundary data is loaded, `alarm` when it is unavailable.
+  boundary data is loaded, `alarm` when it is unavailable. Data availability
+  alarms are not suppressed by vessel state.
+
+## Recommended plugins
+
+- [Signal K auto-state](https://github.com/meri-imperiumi/signalk-autostate)
+  (`@meri-imperiumi/signalk-autostate`) — install and enable it in the Signal K
+  Appstore to set `navigation.state` automatically from vessel movement and
+  anchor information. Starlink Offshore reads that standard path to suppress
+  crossing warnings while moored or anchored; another provider of the same
+  path works too. Auto-state is optional and is installed separately.
 
 ## Signal K resources
 

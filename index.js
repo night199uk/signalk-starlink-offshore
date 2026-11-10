@@ -55,6 +55,7 @@ const NOTIFY_DATA = 'notifications.starlinkOffshore.dataStatus'
 
 // Raw self streams that feed the analysis.
 const SELF_PATHS = [
+  'navigation.state',
   'navigation.position',
   'navigation.courseOverGroundTrue',
   'navigation.courseOverGroundMagnetic',
@@ -164,6 +165,7 @@ module.exports = function (app) {
     )
 
     state = {
+      navigationState: null,
       pos: null,
       cogTrueRad: null,
       cogMagRad: null,
@@ -230,6 +232,9 @@ module.exports = function (app) {
     // Subscribe to the raw data streams used for the analysis.
     const applyPath = (path, value) => {
       switch (path) {
+        case 'navigation.state':
+          state.navigationState = typeof value === 'string' ? value : null
+          break
         case 'navigation.position':
           if (value && typeof value.latitude === 'number' && typeof value.longitude === 'number') {
             state.pos = { lat: value.latitude, lon: value.longitude }
@@ -257,6 +262,11 @@ module.exports = function (app) {
           state.stwMps = typeof value === 'number' && isFinite(value) ? value : null
           break
       }
+    }
+
+    // Auto-state may have published before this plugin started.
+    if (typeof app.getSelfPath === 'function') {
+      applyPath('navigation.state', app.getSelfPath('navigation.state.value'))
     }
 
     unsubscribes.push(
@@ -375,9 +385,10 @@ module.exports = function (app) {
       const sogMps = currentSpeedMps()
 
       // Do nothing unless an input actually changed (quantised to ~1 m / 0.5
-      // degrees / 0.1 m/s). Keeps a moored or steady vessel free.
+      // degrees / 0.1 m/s), including navigation state so warnings are updated
+      // even when position, course and speed stay unchanged.
       const q = (v, s) => (v == null || !isFinite(v) ? 'x' : Math.round(v / s))
-      const inputKey = `${q(lat, 1e-5)}:${q(lon, 1e-5)}:${q(cogDeg, 0.5)}:${q(sogMps, 0.1)}`
+      const inputKey = `${q(lat, 1e-5)}:${q(lon, 1e-5)}:${q(cogDeg, 0.5)}:${q(sogMps, 0.1)}:${state.navigationState}`
       if (inputKey === lastInputKey) return
       lastInputKey = inputKey
 
@@ -528,7 +539,10 @@ module.exports = function (app) {
     if (dataStatus === 'none') {
       stateName = 'alarm'
       message = 'Maritime boundary data is unavailable'
-    } else if (s.first && s.first.distanceNm <= warnNm) {
+    } else if (
+      state.navigationState !== 'moored' && state.navigationState !== 'anchored' &&
+      s.first && s.first.distanceNm <= warnNm
+    ) {
       const c = s.first
       const dist = c.distanceNm.toFixed(1)
       const eta = formatEta(c.timeSeconds)
