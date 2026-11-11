@@ -6,6 +6,8 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const factory = require('../index.js')
+const { TerritoryStore } = require('../lib/data')
+const { Zones } = require('../lib/zones')
 
 function makeApp(opts = {}) {
   // Fake SubscriptionManager: records which paths were subscribed and lets the
@@ -24,6 +26,7 @@ function makeApp(opts = {}) {
 
   const app = {
     selfId: 'foo',
+    getSelfPath: (path) => path === 'navigation.state.value' ? opts.navigationState : undefined,
     debug: () => {},
     error: (m) => errors.push(String(m)),
     setPluginStatus: () => {},
@@ -98,14 +101,15 @@ function bundledLoaded() {
   return fs.existsSync(path.join(__dirname, '..', 'lib', 'geodata', 'territorial-seas-world.json.gz'))
 }
 
-function startBundled(t, make) {
+function startBundled(t, make, config = {}) {
   const ctx = make()
   const plugin = factory(ctx.app)
   t.after(() => {
     plugin.stop()
   })
   const ok = plugin.start({
-    computeIntervalSeconds: 1
+    computeIntervalSeconds: 1,
+    ...config
   })
   assert.strictEqual(ok, true)
   return { ...ctx, plugin }
@@ -114,6 +118,131 @@ function startBundled(t, make) {
 function resourcesFileBuilt() {
   return fs.existsSync(path.join(__dirname, '..', 'lib', 'geodata', 'country-regions.json.gz'))
 }
+
+function boundaryNotification(ctx) {
+  return ctx.msgs.flatMap(ctx.values)
+    .filter((v) => v.path === 'notifications.starlinkOffshore.territorialSea')
+    .at(-1).value
+}
+
+function pushCrossingCourse(ctx) {
+  ctx.push('navigation.position', { latitude: 43.1, longitude: 5.1 })
+  ctx.push('navigation.courseOverGroundTrue', (270 * Math.PI) / 180)
+  ctx.push('navigation.speedOverGround', (6 * 1852) / 3600)
+}
+
+const pausedForecast = {
+  'navigation.nextEvent': 'none',
+  'navigation.nextTerritorialSea': '',
+  'navigation.timeToNextTerritorialSea': null,
+  'navigation.distanceToNextTerritorialSea': null,
+  'navigation.nextEventDistanceM': null,
+  'navigation.timeToLeaveTerritorialSea': null,
+  'navigation.distanceToLeaveTerritorialSea': null
+}
+
+function assertForecastPaused(ctx) {
+  const nav = ctx.navValues()
+  for (const [path, value] of Object.entries(pausedForecast)) {
+    assert.strictEqual(nav[path], value, path)
+  }
+}
+
+for (const legacy of [false, true]) {
+  test(`navigation state pauses and resumes forecasts and warnings (${legacy ? 'legacy' : 'subscriptionmanager'})`, (t) => {
+    t.mock.timers.enable({ apis: ['setInterval'] })
+    const zoneAt = t.mock.method(Zones.prototype, 'zoneAt')
+    const ctx = startBundled(t, () => makeApp({ legacy }), { warningDistanceNm: 250 })
+    assert.ok(ctx.subscribedPaths().includes('navigation.state'))
+    pushCrossingCourse(ctx)
+    t.mock.timers.tick(1000)
+    assert.strictEqual(boundaryNotification(ctx).state, 'warn', 'missing state retains warnings')
+    const forecast = ctx.navValues()
+    assert.notStrictEqual(forecast['navigation.nextEvent'], 'none')
+
+    for (const [state, expected] of [
+      ['moored', 'normal'],
+      ['sailing', 'warn'],
+      ['anchored', 'normal'],
+      ['motoring', 'warn'],
+      ['moored', 'normal'],
+      [null, 'warn'],
+      ['anchored', 'normal'],
+      ['unknown', 'warn']
+    ]) {
+      // Only navigation.state changes: cached motion inputs must not prevent
+      // forecasts and warnings from clearing or resuming.
+      zoneAt.mock.resetCalls()
+      ctx.push('navigation.state', state)
+      t.mock.timers.tick(1000)
+      const notification = boundaryNotification(ctx)
+      assert.strictEqual(notification.state, expected, `state: ${state}`)
+      assert.deepStrictEqual(notification.method, expected === 'warn' ? ['visual', 'sound'] : [])
+      if (expected === 'normal') {
+        assert.deepStrictEqual(ctx.navValues(), { ...forecast, ...pausedForecast })
+        assert.strictEqual(zoneAt.mock.callCount(), 1, 'only the current zone is queried while paused')
+        assert.strictEqual(notification.message, 'Inside France territorial sea')
+      } else {
+        assert.deepStrictEqual(ctx.navValues(), forecast, 'forecast outputs resume')
+        assert.ok(zoneAt.mock.callCount() > 1, 'forecast is recomputed after pausing')
+      }
+    }
+    assert.deepStrictEqual(ctx.errors, [])
+  })
+}
+
+for (const navigationState of ['moored', 'anchored']) {
+  test(`uses existing ${navigationState} state before the first state delta`, (t) => {
+    t.mock.timers.enable({ apis: ['setInterval'] })
+    const zoneAt = t.mock.method(Zones.prototype, 'zoneAt')
+    const ctx = startBundled(t, () => makeApp({ navigationState }), { warningDistanceNm: 250 })
+    pushCrossingCourse(ctx)
+    t.mock.timers.tick(1000)
+    assert.strictEqual(boundaryNotification(ctx).state, 'normal')
+    assert.deepStrictEqual(boundaryNotification(ctx).method, [])
+    assertForecastPaused(ctx)
+    assert.strictEqual(zoneAt.mock.callCount(), 1, 'startup skips the crossing projection')
+
+    // GPS course and speed noise must not restart the expensive projection.
+    for (const course of [275, 260, 280]) {
+      zoneAt.mock.resetCalls()
+      ctx.push('navigation.courseOverGroundTrue', (course * Math.PI) / 180)
+      ctx.push('navigation.speedOverGround', course / 1000)
+      t.mock.timers.tick(1000)
+      assertForecastPaused(ctx)
+      assert.strictEqual(zoneAt.mock.callCount(), 1, 'no projection while paused')
+    }
+
+    const previousDistance = ctx.navValues()['navigation.territorialSeaBoundaryDistanceM']
+    // Current-zone, country and nearest-boundary outputs still follow GPS.
+    zoneAt.mock.resetCalls()
+    ctx.push('navigation.position', { latitude: 10.416582624299975, longitude: -75.54658745563728 })
+    t.mock.timers.tick(1000)
+    const nav = ctx.navValues()
+    assert.strictEqual(nav['navigation.maritimeZone'], 'land')
+    assert.strictEqual(nav['navigation.currentTerritorialSea'], 'Colombia')
+    assert.strictEqual(nav['navigation.insideTerritorialSea'], false)
+    assert.strictEqual(nav['navigation.onLand'], true)
+    assert.ok(Number.isFinite(nav['navigation.territorialSeaBoundaryDistanceM']))
+    assert.notStrictEqual(nav['navigation.territorialSeaBoundaryDistanceM'], previousDistance)
+    assert.strictEqual(boundaryNotification(ctx).message, 'On the coast of Colombia')
+    assertForecastPaused(ctx)
+    assert.strictEqual(zoneAt.mock.callCount(), 1, 'position changes do not restart the projection')
+    assert.deepStrictEqual(ctx.errors, [])
+  })
+}
+
+test('anchored state does not suppress missing boundary data alarms', (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  t.mock.method(TerritoryStore.prototype, 'loadBundled', () => 0)
+  const ctx = startBundled(t, () => makeApp({ navigationState: 'anchored' }))
+  pushCrossingCourse(ctx)
+  t.mock.timers.tick(1000)
+  assert.strictEqual(boundaryNotification(ctx).state, 'alarm')
+  const dataNotification = ctx.msgs.flatMap(ctx.values)
+    .find((v) => v.path === 'notifications.starlinkOffshore.dataStatus')
+  assert.strictEqual(dataNotification.value.state, 'alarm')
+})
 
 test('subscribes through subscriptionmanager and computeNow publishes outputs', async (t) => {
   if (!bundledLoaded()) return t.skip('bundled dataset not built')
