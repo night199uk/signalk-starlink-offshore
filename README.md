@@ -61,6 +61,14 @@ All values are published for `vessels.<self>` under the plugin source
 | `navigation.distanceToLeaveTerritorialSea` | m | Distance until leaving the current jurisdiction |
 | `navigation.territorialSeaBoundaryDistanceM` | m | Distance to the nearest jurisdiction boundary (either layer) |
 
+While `navigation.state` is `moored` or `anchored`, crossing forecasts are
+paused: `navigation.nextEvent` is `none`, `navigation.nextTerritorialSea` is
+`''`, and all forecast time and distance values are `null`. Current-zone,
+country, and nearest-boundary distance updates continue. Forecasting resumes
+on the next compute interval after the state changes away from either value,
+even if position, course and speed have not changed. Missing or unknown state
+retains the normal forecasting behavior.
+
 ## Notifications
 
 - `notifications.starlinkOffshore.territorialSea` — warns (`visual` + `sound`)
@@ -70,8 +78,7 @@ All values are published for `vessels.<self>` under the plugin source
   an active crossing warning on the next compute interval, even if position,
   course and speed have not changed. Warnings resume when the state changes
   away from `moored` or `anchored`. Missing or unknown state retains the normal
-  warning behavior. Zone and crossing forecast outputs remain available in
-  every state.
+  warning behavior. Current-zone updates remain available in every state.
 - `notifications.starlinkOffshore.dataStatus` — `normal` when the bundled
   boundary data is loaded, `alarm` when it is unavailable. Data availability
   alarms are not suppressed by vessel state.
@@ -81,9 +88,9 @@ All values are published for `vessels.<self>` under the plugin source
 - [Signal K auto-state](https://github.com/meri-imperiumi/signalk-autostate)
   (`@meri-imperiumi/signalk-autostate`) — install and enable it in the Signal K
   Appstore to set `navigation.state` automatically from vessel movement and
-  anchor information. Starlink Offshore reads that standard path to suppress
-  crossing warnings while moored or anchored; another provider of the same
-  path works too. Auto-state is optional and is installed separately.
+  anchor information. Starlink Offshore reads that standard path to pause
+  crossing forecasts and warnings while moored or anchored; another provider
+  of the same path works too. Auto-state is optional and is installed separately.
 
 ## Signal K resources
 

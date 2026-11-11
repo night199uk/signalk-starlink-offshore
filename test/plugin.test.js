@@ -7,6 +7,7 @@ const path = require('node:path')
 
 const factory = require('../index.js')
 const { TerritoryStore } = require('../lib/data')
+const { Zones } = require('../lib/zones')
 
 function makeApp(opts = {}) {
   // Fake SubscriptionManager: records which paths were subscribed and lets the
@@ -130,9 +131,27 @@ function pushCrossingCourse(ctx) {
   ctx.push('navigation.speedOverGround', (6 * 1852) / 3600)
 }
 
+const pausedForecast = {
+  'navigation.nextEvent': 'none',
+  'navigation.nextTerritorialSea': '',
+  'navigation.timeToNextTerritorialSea': null,
+  'navigation.distanceToNextTerritorialSea': null,
+  'navigation.nextEventDistanceM': null,
+  'navigation.timeToLeaveTerritorialSea': null,
+  'navigation.distanceToLeaveTerritorialSea': null
+}
+
+function assertForecastPaused(ctx) {
+  const nav = ctx.navValues()
+  for (const [path, value] of Object.entries(pausedForecast)) {
+    assert.strictEqual(nav[path], value, path)
+  }
+}
+
 for (const legacy of [false, true]) {
-  test(`navigation state clears and restores crossing warnings (${legacy ? 'legacy' : 'subscriptionmanager'})`, (t) => {
+  test(`navigation state pauses and resumes forecasts and warnings (${legacy ? 'legacy' : 'subscriptionmanager'})`, (t) => {
     t.mock.timers.enable({ apis: ['setInterval'] })
+    const zoneAt = t.mock.method(Zones.prototype, 'zoneAt')
     const ctx = startBundled(t, () => makeApp({ legacy }), { warningDistanceNm: 250 })
     assert.ok(ctx.subscribedPaths().includes('navigation.state'))
     pushCrossingCourse(ctx)
@@ -152,13 +171,21 @@ for (const legacy of [false, true]) {
       ['unknown', 'warn']
     ]) {
       // Only navigation.state changes: cached motion inputs must not prevent
-      // a warning from clearing or resuming.
+      // forecasts and warnings from clearing or resuming.
+      zoneAt.mock.resetCalls()
       ctx.push('navigation.state', state)
       t.mock.timers.tick(1000)
       const notification = boundaryNotification(ctx)
       assert.strictEqual(notification.state, expected, `state: ${state}`)
       assert.deepStrictEqual(notification.method, expected === 'warn' ? ['visual', 'sound'] : [])
-      assert.deepStrictEqual(ctx.navValues(), forecast, 'forecast outputs stay available')
+      if (expected === 'normal') {
+        assert.deepStrictEqual(ctx.navValues(), { ...forecast, ...pausedForecast })
+        assert.strictEqual(zoneAt.mock.callCount(), 1, 'only the current zone is queried while paused')
+        assert.strictEqual(notification.message, 'Inside France territorial sea')
+      } else {
+        assert.deepStrictEqual(ctx.navValues(), forecast, 'forecast outputs resume')
+        assert.ok(zoneAt.mock.callCount() > 1, 'forecast is recomputed after pausing')
+      }
     }
     assert.deepStrictEqual(ctx.errors, [])
   })
@@ -167,12 +194,40 @@ for (const legacy of [false, true]) {
 for (const navigationState of ['moored', 'anchored']) {
   test(`uses existing ${navigationState} state before the first state delta`, (t) => {
     t.mock.timers.enable({ apis: ['setInterval'] })
+    const zoneAt = t.mock.method(Zones.prototype, 'zoneAt')
     const ctx = startBundled(t, () => makeApp({ navigationState }), { warningDistanceNm: 250 })
     pushCrossingCourse(ctx)
     t.mock.timers.tick(1000)
     assert.strictEqual(boundaryNotification(ctx).state, 'normal')
     assert.deepStrictEqual(boundaryNotification(ctx).method, [])
-    assert.notStrictEqual(ctx.navValues()['navigation.nextEvent'], 'none')
+    assertForecastPaused(ctx)
+    assert.strictEqual(zoneAt.mock.callCount(), 1, 'startup skips the crossing projection')
+
+    // GPS course and speed noise must not restart the expensive projection.
+    for (const course of [275, 260, 280]) {
+      zoneAt.mock.resetCalls()
+      ctx.push('navigation.courseOverGroundTrue', (course * Math.PI) / 180)
+      ctx.push('navigation.speedOverGround', course / 1000)
+      t.mock.timers.tick(1000)
+      assertForecastPaused(ctx)
+      assert.strictEqual(zoneAt.mock.callCount(), 1, 'no projection while paused')
+    }
+
+    const previousDistance = ctx.navValues()['navigation.territorialSeaBoundaryDistanceM']
+    // Current-zone, country and nearest-boundary outputs still follow GPS.
+    zoneAt.mock.resetCalls()
+    ctx.push('navigation.position', { latitude: 10.416582624299975, longitude: -75.54658745563728 })
+    t.mock.timers.tick(1000)
+    const nav = ctx.navValues()
+    assert.strictEqual(nav['navigation.maritimeZone'], 'land')
+    assert.strictEqual(nav['navigation.currentTerritorialSea'], 'Colombia')
+    assert.strictEqual(nav['navigation.insideTerritorialSea'], false)
+    assert.strictEqual(nav['navigation.onLand'], true)
+    assert.ok(Number.isFinite(nav['navigation.territorialSeaBoundaryDistanceM']))
+    assert.notStrictEqual(nav['navigation.territorialSeaBoundaryDistanceM'], previousDistance)
+    assert.strictEqual(boundaryNotification(ctx).message, 'On the coast of Colombia')
+    assertForecastPaused(ctx)
+    assert.strictEqual(zoneAt.mock.callCount(), 1, 'position changes do not restart the projection')
     assert.deepStrictEqual(ctx.errors, [])
   })
 }

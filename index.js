@@ -420,7 +420,12 @@ module.exports = function (app) {
       // reuse the cached forecast (distances/times stay valid).
       const forecastKey = `${posKey}:${q(cogDeg, 1)}:${q(sogMps, 0.5)}`
       let analysis
-      if (forecastCache && forecastCache.key === forecastKey) {
+      if (state.navigationState === 'moored' || state.navigationState === 'anchored') {
+        // Keep current-zone and nearest-boundary updates running, but clear
+        // predictions and discard the cached forecast until underway again.
+        analysis = { startCountries: zone.countries, crossings: [] }
+        forecastCache = null
+      } else if (forecastCache && forecastCache.key === forecastKey) {
         analysis = forecastCache.analysis
       } else {
         const jurisdictionAt = (la, lo) =>
@@ -539,10 +544,7 @@ module.exports = function (app) {
     if (dataStatus === 'none') {
       stateName = 'alarm'
       message = 'Maritime boundary data is unavailable'
-    } else if (
-      state.navigationState !== 'moored' && state.navigationState !== 'anchored' &&
-      s.first && s.first.distanceNm <= warnNm
-    ) {
+    } else if (s.first && s.first.distanceNm <= warnNm) {
       const c = s.first
       const dist = c.distanceNm.toFixed(1)
       const eta = formatEta(c.timeSeconds)
