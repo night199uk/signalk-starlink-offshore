@@ -157,6 +157,37 @@ CC-BY 4.0.
 Re-run these whenever a new dataset version is released, then commit the
 updated `lib/geodata/*.json.gz` files.
 
+## Releasing
+
+Publishing is automated by `.github/workflows/release.yml`, triggered by pushing
+a version tag (`v*`). It authenticates with npm **trusted publishing** (OIDC) -
+no npm token secret - publishes to npm (with automatic provenance), and creates
+the matching GitHub Release.
+
+One-time setup on npmjs.com (Package -> Settings -> Trusted Publisher ->
+GitHub Actions):
+
+- Organization or user: `night199uk`
+- Repository: `signalk-starlink-offshore`
+- Workflow filename: `release.yml`
+- Environment name: leave blank
+- Allowed actions: enable **npm publish**
+
+To release:
+
+```sh
+npm version patch --no-git-tag-version   # or minor/major
+git add -A && git commit -m "Release v$(node -p "require('./package.json').version")"
+git tag "v$(node -p "require('./package.json').version")"
+git push origin main --tags
+```
+
+The workflow verifies the tag matches `package.json`, runs the tests, publishes
+to npm, and creates the GitHub release.
+
+If the package is not on npm yet, publish the first version manually to create
+it, then add the trusted publisher.
+
 ## Data attribution and disclaimer
 
 - Territorial seas: VLIZ Maritime Boundaries Geodatabase: Territorial Seas

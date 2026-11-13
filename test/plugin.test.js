@@ -148,6 +148,39 @@ test('subscribes through subscriptionmanager and computeNow publishes outputs', 
   )
 })
 
+test('declares event-driven meta so outputs are not marked stale', async (t) => {
+  if (!bundledLoaded()) return t.skip('bundled dataset not built')
+  const ctx = startBundled(t, makeApp)
+
+  ctx.push('navigation.position', { latitude: 43.1, longitude: 5.1 })
+  await sleep(1600)
+
+  const meta = ctx.msgs.flatMap((m) => (m.updates || []).flatMap((u) => u.meta || []))
+  const byPath = new Map(meta.map((m) => [m.path, m.value]))
+  const expected = [
+    'navigation.maritimeZone',
+    'navigation.insideTerritorialSea',
+    'navigation.onLand',
+    'navigation.currentTerritorialSea',
+    'navigation.nextTerritorialSea',
+    'navigation.timeToNextTerritorialSea',
+    'navigation.distanceToNextTerritorialSea',
+    'navigation.nextEvent',
+    'navigation.nextEventDistanceM',
+    'navigation.timeToLeaveTerritorialSea',
+    'navigation.distanceToLeaveTerritorialSea',
+    'navigation.territorialSeaBoundaryDistanceM'
+  ]
+  for (const path of expected) {
+    const value = byPath.get(path)
+    assert.ok(value, `meta present for ${path}`)
+    // timeout: 0 disables staleness enforcement; updateContract: 'event' tells
+    // Signal K that silence means "unchanged" rather than "sensor dead".
+    assert.strictEqual(value.timeout, 0, `${path} disables the staleness timeout`)
+    assert.strictEqual(value.updateContract, 'event', `${path} is event-driven`)
+  }
+})
+
 test('computeNow re-runs on the interval and picks up changed positions', async (t) => {
   if (!bundledLoaded()) return t.skip('bundled dataset not built')
   const ctx = startBundled(t, makeApp)

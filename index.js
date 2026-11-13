@@ -317,29 +317,35 @@ module.exports = function (app) {
   function sendMeta() {
     if (metaSent) return
     metaSent = true
-    const grouped = {
-      s: [
-        'navigation.timeToNextTerritorialSea',
-        'navigation.timeToLeaveTerritorialSea'
-      ],
-      m: [
-        'navigation.distanceToNextTerritorialSea',
-        'navigation.distanceToLeaveTerritorialSea',
-        'navigation.territorialSeaBoundaryDistanceM',
-        'navigation.nextEventDistanceM'
+    // Our outputs are event-driven: values change only when position, course
+    // or speed change, so silence means "unchanged", not "sensor dead".
+    // Declare that to Signal K (updateContract: 'event') and also disable the
+    // numeric timeout for servers that predate updateContract - otherwise a
+    // moored vessel's values are marked stale after the default 60 s.
+    const common = { timeout: 0, updateContract: 'event' }
+    const meta = [
+      { path: 'navigation.maritimeZone', value: { ...common, description: 'Maritime zone: territorial-sea, land or high-seas' } },
+      { path: 'navigation.insideTerritorialSea', value: { ...common, description: 'Inside a 12 NM territorial sea' } },
+      { path: 'navigation.onLand', value: { ...common, description: 'On the coast (land or internal/archipelagic waters)' } },
+      { path: 'navigation.currentTerritorialSea', value: { ...common, description: 'Countries currently inside' } },
+      { path: 'navigation.nextTerritorialSea', value: { ...common, description: 'Next new country to enter' } },
+      { path: 'navigation.timeToNextTerritorialSea', value: { ...common, units: 's', description: 'Seconds until entering the next new country' } },
+      { path: 'navigation.distanceToNextTerritorialSea', value: { ...common, units: 'm', description: 'Metres until entering the next new country' } },
+      { path: 'navigation.nextEvent', value: { ...common, description: 'Next jurisdiction change: enter, leave, transition or none' } },
+      { path: 'navigation.nextEventDistanceM', value: { ...common, units: 'm', description: 'Metres to the next jurisdiction change' } },
+      { path: 'navigation.timeToLeaveTerritorialSea', value: { ...common, units: 's', description: 'Seconds until leaving the current jurisdiction' } },
+      { path: 'navigation.distanceToLeaveTerritorialSea', value: { ...common, units: 'm', description: 'Metres until leaving the current jurisdiction' } },
+      { path: 'navigation.territorialSeaBoundaryDistanceM', value: { ...common, units: 'm', description: 'Metres to the nearest jurisdiction boundary' } }
+    ]
+    app.handleMessage(plugin.id, {
+      context: `vessels.${app.selfId}`,
+      updates: [
+        {
+          $source: plugin.id,
+          meta
+        }
       ]
-    }
-    for (const [units, paths] of Object.entries(grouped)) {
-      app.handleMessage(plugin.id, {
-        context: `vessels.${app.selfId}`,
-        updates: [
-          {
-            $source: plugin.id,
-            meta: paths.map((p) => ({ path: p, value: { units } }))
-          }
-        ]
-      })
-    }
+    })
   }
 
   function currentCourseDeg() {
