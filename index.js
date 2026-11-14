@@ -153,6 +153,16 @@ module.exports = function (app) {
   const unsubscribes = []
 
   plugin.start = function (pluginConfig) {
+    // Reset per-run state so a settings save (stopPlugin + start on the same
+    // instance) re-publishes every output. See issue #4.
+    metaSent = false
+    lastOutput = null
+    lastBoundaryNotification = null
+    lastDataNotification = null
+    lastInputKey = null
+    forecastCache = null
+    nearestCache = null
+
     config = Object.assign(
       {
         lookaheadNm: 250,
